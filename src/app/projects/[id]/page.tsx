@@ -21,6 +21,8 @@ import {
   Loader2,
   Upload,
   CheckCircle2,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 
 interface EquipmentItem {
@@ -55,6 +57,7 @@ export default function ProjectDetailPage() {
   const [bidAmountDisplay, setBidAmountDisplay] = useState('');
   const [proposalNote, setProposalNote] = useState('');
   const [portfolioLink, setPortfolioLink] = useState('');
+  const [equipmentList, setEquipmentList] = useState<EquipmentItem[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState('');
@@ -129,6 +132,21 @@ export default function ProjectDetailPage() {
     window.dispatchEvent(new Event('dez-cart-updated'));
   };
 
+  // Quản lý danh sách thiết bị nhà thầu mang theo
+  const addEquipmentRow = () => {
+    setEquipmentList((prev) => [...prev, { name: '', quantity: 1 }]);
+  };
+
+  const updateEquipmentRow = (idx: number, field: 'name' | 'quantity', value: string | number) => {
+    setEquipmentList((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, [field]: value } : row))
+    );
+  };
+
+  const removeEquipmentRow = (idx: number) => {
+    setEquipmentList((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   const handleBidSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) {
@@ -164,6 +182,10 @@ export default function ProjectDetailPage() {
         driveFileUrl = uploadData.webViewLink || driveFileUrl;
       }
 
+      const cleanedEquipment = equipmentList
+        .filter((eq) => eq.name.trim() !== '')
+        .map((eq) => ({ name: eq.name.trim(), quantity: Number(eq.quantity) || 1 }));
+
       const { data: inserted, error } = await supabase
         .from('bids')
         .insert({
@@ -171,6 +193,7 @@ export default function ProjectDetailPage() {
           vendor_id: user.id,
           bid_amount: numericAmount,
           proposal_note: proposalNote.trim(),
+          equipment_list: cleanedEquipment,
           drive_file_id: driveFileId,
           drive_file_url: driveFileUrl,
           status: 'pending',
@@ -208,13 +231,13 @@ export default function ProjectDetailPage() {
   const isUnderTwoHours = msLeft <= 2 * 60 * 60 * 1000;
   const isExpired = msLeft <= 0 || project.status !== 'open';
 
-  const equipmentList: EquipmentItem[] = Array.isArray(project.equipment_list)
-    ? project.equipment_list
-    : [];
-
   const fullAddress = [project.address_detail, project.ward, project.province || project.location]
     .filter(Boolean)
     .join(', ');
+
+  const mySubmittedEquipment: EquipmentItem[] = Array.isArray(myExistingBid?.equipment_list)
+    ? myExistingBid.equipment_list
+    : [];
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -367,28 +390,6 @@ export default function ProjectDetailPage() {
             {project.description}
           </div>
         </div>
-
-        {/* Danh sách thiết bị yêu cầu */}
-        {equipmentList.length > 0 && (
-          <div className="space-y-3">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Wrench className="w-4 h-4 text-sky-400" /> Danh sách thiết bị yêu cầu
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {equipmentList.map((eq, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm"
-                >
-                  <span className="text-slate-200">{eq.name}</span>
-                  <span className="px-2.5 py-0.5 rounded-lg bg-sky-500/20 text-sky-300 font-bold text-xs">
-                    SL: {eq.quantity}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Form nộp hồ sơ đấu thầu */}
@@ -396,13 +397,28 @@ export default function ProjectDetailPage() {
         <h2 className="text-xl font-bold text-white">Nộp Hồ Sơ Đấu Thầu</h2>
 
         {myExistingBid ? (
-          <div className="p-5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 space-y-2">
+          <div className="p-5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 space-y-3">
             <div className="flex items-center gap-2 text-emerald-300 font-bold">
               <CheckCircle2 className="w-5 h-5" /> Bạn đã nộp hồ sơ cho dự án này
             </div>
             <p className="text-sm text-slate-200">
               Giá chào thầu của bạn: <strong>{formatVND(myExistingBid.bid_amount)}</strong>
             </p>
+            {mySubmittedEquipment.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs text-slate-300 font-semibold">Thiết bị đã kê khai:</p>
+                <div className="flex flex-wrap gap-2">
+                  {mySubmittedEquipment.map((eq, idx) => (
+                    <span
+                      key={idx}
+                      className="px-2.5 py-1 rounded-lg bg-white/10 text-xs text-white"
+                    >
+                      {eq.name} (x{eq.quantity})
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             <p className="text-xs text-slate-400">
               Trạng thái hiện tại:{' '}
               <span className="text-white font-semibold uppercase">
@@ -431,7 +447,7 @@ export default function ProjectDetailPage() {
             </Link>
           </div>
         ) : (
-          <form onSubmit={handleBidSubmit} className="space-y-4">
+          <form onSubmit={handleBidSubmit} className="space-y-5">
             {submitMsg && (
               <div className="p-3 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-200 text-sm">
                 {submitMsg}
@@ -454,7 +470,7 @@ export default function ProjectDetailPage() {
                   value={bidAmountDisplay}
                   onChange={(e) => setBidAmountDisplay(formatNumberInput(e.target.value))}
                   placeholder="VD: 32.000.000"
-                  className="w-full px-4 py-2.5 rounded-xl glass-input text-sm font-semibold"
+                  className="w-full px-4 py-2.5 rounded-xl glass-input text-sm font-semibold text-emerald-300"
                 />
               </div>
 
@@ -472,16 +488,70 @@ export default function ProjectDetailPage() {
               </div>
             </div>
 
+            {/* Danh sách thiết bị nhà thầu mang đi thực hiện */}
+            <div className="space-y-2.5 p-4 rounded-xl bg-white/5 border border-white/10">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                  <Wrench className="w-4 h-4 text-sky-400" /> Danh sách thiết bị sử dụng cho dự án
+                </label>
+                <button
+                  type="button"
+                  onClick={addEquipmentRow}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-sky-500/20 text-sky-300 border border-sky-400/30 hover:bg-sky-500/30 transition flex items-center gap-1 font-medium"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Thêm thiết bị
+                </button>
+              </div>
+
+              {equipmentList.length === 0 ? (
+                <p className="text-xs text-slate-400">
+                  Bấm &ldquo;+ Thêm thiết bị&rdquo; để kê khai máy ảnh, máy quay, gimbal, flycam, đèn... bạn sẽ mang theo.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {equipmentList.map((row, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input
+                        type="text"
+                        required
+                        value={row.name}
+                        onChange={(e) => updateEquipmentRow(idx, 'name', e.target.value)}
+                        placeholder="Tên thiết bị (VD: Sony FX3, Gimbal RS4, Flycam Mavic 3...)"
+                        className="flex-1 px-3.5 py-2 rounded-xl glass-input text-xs"
+                      />
+                      <input
+                        type="number"
+                        min={1}
+                        required
+                        value={row.quantity}
+                        onChange={(e) => updateEquipmentRow(idx, 'quantity', Number(e.target.value))}
+                        className="w-20 px-2.5 py-2 rounded-xl glass-input text-xs text-center"
+                        title="Số lượng"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeEquipmentRow(idx)}
+                        className="p-2 rounded-xl bg-rose-500/15 text-rose-300 hover:bg-rose-500/25"
+                        title="Xóa dòng này"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div>
               <label className="block text-xs text-slate-300 mb-1.5">
-                Đề xuất phương án triển khai, danh sách nhân sự &amp; thiết bị *
+                Đề xuất phương án triển khai &amp; cam kết tiến độ *
               </label>
               <textarea
                 rows={4}
                 required
                 value={proposalNote}
                 onChange={(e) => setProposalNote(e.target.value)}
-                placeholder="Mô tả chi tiết ekip tham gia, máy móc sử dụng và cam kết tiến độ trả file..."
+                placeholder="Mô tả chi tiết ekip tham gia, quy trình quay chụp và cam kết thời gian trả file..."
                 className="w-full px-4 py-2.5 rounded-xl glass-input text-sm"
               />
             </div>
