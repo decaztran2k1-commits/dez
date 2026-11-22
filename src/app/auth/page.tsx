@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
-import { Loader2, Eye, EyeOff, Check, X, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { Loader2, Eye, EyeOff, Check, X, ShieldCheck, ArrowLeft, Mail } from 'lucide-react';
 
 type AuthMode = 'login' | 'register' | 'register_otp' | 'forgot' | 'forgot_otp' | 'reset_password' | 'mfa';
 
@@ -20,8 +20,6 @@ export default function AuthPage() {
   const [phoneError, setPhoneError] = useState('');
   const [checkingPhone, setCheckingPhone] = useState(false);
 
-  // Quên mật khẩu & OTP
-  const [recoveryMethod, setRecoveryMethod] = useState<'phone' | 'email'>('phone');
   const [otpCode, setOtpCode] = useState('');
 
   // 2FA MFA khi đăng nhập
@@ -35,15 +33,6 @@ export default function AuthPage() {
   const supabase = createClient();
   const router = useRouter();
 
-  // Chuẩn hóa SĐT Việt Nam sang định dạng E.164 (+84...) cho Supabase SMS OTP
-  const formatVNPhone = (raw: string) => {
-    const cleaned = raw.trim().replace(/\s+/g, '');
-    if (cleaned.startsWith('0')) return '+84' + cleaned.slice(1);
-    if (!cleaned.startsWith('+')) return '+84' + cleaned;
-    return cleaned;
-  };
-
-  // Kiểm tra điều kiện mật khẩu mạnh (không dấu)
   const passwordRules = {
     minLength: password.length >= 8,
     hasUpper: /[A-Z]/.test(password),
@@ -84,17 +73,19 @@ export default function AuthPage() {
     setErrorMsg('');
   };
 
-  // 1. Xử lý Đăng nhập
+  // 1. Đăng nhập
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     resetAlerts();
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
       if (error) throw error;
 
-      // Kiểm tra 2FA
       const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
       if (aal?.nextLevel === 'aal2' && aal.currentLevel !== 'aal2') {
         const { data: factors } = await supabase.auth.mfa.listFactors();
@@ -116,7 +107,7 @@ export default function AuthPage() {
     }
   };
 
-  // 2. Xác thực mã 2FA
+  // 2. Xác thực 2FA
   const handleVerifyMFA = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -134,7 +125,7 @@ export default function AuthPage() {
     router.refresh();
   };
 
-  // 3. Xử lý Đăng ký (mặc định gửi OTP qua SĐT)
+  // 3. Đăng ký -> Gửi OTP 6 số qua Email (Miễn phí 100%)
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -150,21 +141,20 @@ export default function AuthPage() {
         return;
       }
 
-      const formattedPhone = formatVNPhone(phone);
       const { error } = await supabase.auth.signUp({
-        phone: formattedPhone,
+        email: email.trim(),
         password,
         options: {
           data: {
             company_name: companyName.trim(),
             phone: phone.trim(),
-            email: email.trim(),
           },
         },
       });
       if (error) throw error;
 
-      setMessage(`Mã OTP 6 số đã được gửi tới SĐT ${formattedPhone}.`);
+      setMessage(`Mã xác thực OTP 6 số đã được gửi tới Email ${email.trim()}. Vui lòng kiểm tra hộp thư (hoặc thư mục Spam).`);
+      setOtpCode('');
       setMode('register_otp');
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -173,51 +163,39 @@ export default function AuthPage() {
     }
   };
 
-  // 4. Xác nhận OTP đăng ký SĐT
+  // 4. Xác nhận OTP Email khi đăng ký
   const handleVerifyRegisterOTP = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     resetAlerts();
     try {
-      const formattedPhone = formatVNPhone(phone);
       const { error } = await supabase.auth.verifyOtp({
-        phone: formattedPhone,
+        email: email.trim(),
         token: otpCode.trim(),
-        type: 'sms',
+        type: 'signup',
       });
       if (error) throw error;
-
-      // Gắn thêm Email vào tài khoản sau khi xác thực SĐT
-      if (email.trim()) {
-        await supabase.auth.updateUser({ email: email.trim() });
-      }
 
       router.push('/');
       router.refresh();
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'Mã OTP không đúng hoặc đã hết hạn.');
     } finally {
       setLoading(false);
     }
   };
 
-  // 5. Gửi OTP Quên mật khẩu (SĐT hoặc Email)
+  // 5. Gửi OTP Quên mật khẩu qua Email
   const handleForgotSendOTP = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     resetAlerts();
 
     try {
-      if (recoveryMethod === 'phone') {
-        const formattedPhone = formatVNPhone(phone);
-        const { error } = await supabase.auth.signInWithOtp({ phone: formattedPhone });
-        if (error) throw error;
-        setMessage(`Đã gửi mã OTP khôi phục tới SĐT ${formattedPhone}.`);
-      } else {
-        const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
-        if (error) throw error;
-        setMessage(`Đã gửi mã OTP khôi phục tới Email ${email.trim()}.`);
-      }
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+      if (error) throw error;
+      setMessage(`Đã gửi mã OTP khôi phục 6 số tới Email ${email.trim()}.`);
+      setOtpCode('');
       setMode('forgot_otp');
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -233,32 +211,24 @@ export default function AuthPage() {
     resetAlerts();
 
     try {
-      if (recoveryMethod === 'phone') {
-        const { error } = await supabase.auth.verifyOtp({
-          phone: formatVNPhone(phone),
-          token: otpCode.trim(),
-          type: 'sms',
-        });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.verifyOtp({
-          email: email.trim(),
-          token: otpCode.trim(),
-          type: 'recovery',
-        });
-        if (error) throw error;
-      }
+      const { error } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: otpCode.trim(),
+        type: 'recovery',
+      });
+      if (error) throw error;
+
       setPassword('');
       setConfirmPassword('');
       setMode('reset_password');
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'Mã OTP không đúng hoặc đã hết hạn.');
     } finally {
       setLoading(false);
     }
   };
 
-  // 7. Đặt lại mật khẩu mới
+  // 7. Đặt mật khẩu mới
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -294,15 +264,13 @@ export default function AuthPage() {
         <h1 className="text-2xl font-bold text-white">
           {mode === 'login' && 'Đăng Nhập Hệ Thống'}
           {mode === 'register' && 'Đăng Ký Nhà Thầu Media'}
-          {mode === 'register_otp' && 'Xác Thực OTP Số Điện Thoại'}
+          {mode === 'register_otp' && 'Xác Thực OTP Email'}
           {mode === 'forgot' && 'Quên Mật Khẩu'}
-          {mode === 'forgot_otp' && 'Nhập Mã OTP Khôi Phục'}
+          {mode === 'forgot_otp' && 'Nhập Mã OTP Email'}
           {mode === 'reset_password' && 'Đặt Mật Khẩu Mới'}
           {mode === 'mfa' && 'Xác Thực 2 Lớp (2FA)'}
         </h1>
-        <p className="text-sm text-slate-400">
-          Cổng đối tác DEZ EVENT
-        </p>
+        <p className="text-sm text-slate-400">Cổng đối tác DEZ EVENT</p>
       </div>
 
       {message && (
@@ -386,7 +354,7 @@ export default function AuthPage() {
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-300 mb-1.5">Số điện thoại (Nhận OTP) *</label>
+            <label className="block text-xs text-slate-300 mb-1.5">Số điện thoại liên hệ *</label>
             <div className="relative">
               <input
                 type="tel"
@@ -411,7 +379,7 @@ export default function AuthPage() {
             {phoneError && <p className="text-xs text-rose-400 mt-1">{phoneError}</p>}
           </div>
           <div>
-            <label className="block text-xs text-slate-300 mb-1.5">Email *</label>
+            <label className="block text-xs text-slate-300 mb-1.5">Email (Nhận mã OTP) *</label>
             <input
               type="email"
               required
@@ -487,21 +455,25 @@ export default function AuthPage() {
             className="w-full py-3 rounded-xl bg-white text-[#060b19] font-bold text-sm hover:bg-slate-200 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-            Gửi mã OTP xác thực SĐT
+            Gửi mã OTP về Email
           </button>
         </form>
       )}
 
-      {/* NHẬP OTP ĐĂNG KÝ */}
+      {/* NHẬP OTP EMAIL ĐĂNG KÝ */}
       {mode === 'register_otp' && (
         <form onSubmit={handleVerifyRegisterOTP} className="space-y-4">
+          <div className="flex items-center gap-2 text-xs text-sky-300 bg-sky-500/10 p-3 rounded-xl border border-sky-400/20">
+            <Mail className="w-4 h-4 shrink-0" />
+            <span>Nhập mã OTP 6 chữ số đã được gửi tới email <strong>{email}</strong>.</span>
+          </div>
           <input
             type="text"
             required
             maxLength={6}
             value={otpCode}
             onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-            placeholder="Nhập 6 số OTP"
+            placeholder="000000"
             className="w-full px-4 py-3 rounded-xl glass-input text-center tracking-widest font-mono text-lg"
           />
           <button
@@ -514,62 +486,26 @@ export default function AuthPage() {
         </form>
       )}
 
-      {/* QUÊN MẬT KHẨU (CHỌN SĐT HOẶC EMAIL) */}
+      {/* QUÊN MẬT KHẨU QUA EMAIL */}
       {mode === 'forgot' && (
         <form onSubmit={handleForgotSendOTP} className="space-y-4">
-          <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-white/5 border border-white/10">
-            <button
-              type="button"
-              onClick={() => setRecoveryMethod('phone')}
-              className={`py-2 rounded-lg text-xs font-semibold transition ${
-                recoveryMethod === 'phone' ? 'bg-white text-[#060b19]' : 'text-slate-300'
-              }`}
-            >
-              Qua Số điện thoại
-            </button>
-            <button
-              type="button"
-              onClick={() => setRecoveryMethod('email')}
-              className={`py-2 rounded-lg text-xs font-semibold transition ${
-                recoveryMethod === 'email' ? 'bg-white text-[#060b19]' : 'text-slate-300'
-              }`}
-            >
-              Qua Email
-            </button>
+          <div>
+            <label className="block text-xs text-slate-300 mb-1.5">Email đã đăng ký *</label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="studio@email.com"
+              className="w-full px-4 py-2.5 rounded-xl glass-input text-sm"
+            />
           </div>
-
-          {recoveryMethod === 'phone' ? (
-            <div>
-              <label className="block text-xs text-slate-300 mb-1.5">Số điện thoại đã đăng ký *</label>
-              <input
-                type="tel"
-                required
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="09xxxxxxxx"
-                className="w-full px-4 py-2.5 rounded-xl glass-input text-sm"
-              />
-            </div>
-          ) : (
-            <div>
-              <label className="block text-xs text-slate-300 mb-1.5">Email đã đăng ký *</label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="studio@email.com"
-                className="w-full px-4 py-2.5 rounded-xl glass-input text-sm"
-              />
-            </div>
-          )}
-
           <button
             type="submit"
             disabled={loading}
             className="w-full py-3 rounded-xl bg-white text-[#060b19] font-bold text-sm hover:bg-slate-200"
           >
-            {loading ? 'Đang gửi OTP...' : 'Nhận mã OTP khôi phục'}
+            {loading ? 'Đang gửi OTP...' : 'Nhận mã OTP qua Email'}
           </button>
         </form>
       )}
@@ -671,7 +607,7 @@ export default function AuthPage() {
         </form>
       )}
 
-      {/* ĐIỀU HƯỚNG CHUYỂN TAB */}
+      {/* ĐIỀU HƯỚNG */}
       <div className="text-center text-sm text-slate-400 pt-2 border-t border-white/10">
         {mode === 'login' ? (
           <>
